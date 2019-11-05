@@ -69,6 +69,9 @@ Density_Water = 8.3176 #lb-m/gal @ 80 deg F, http://www.engineeringtoolbox.com/w
 #These constants can be changed if wanting to try different arrangements (E.g. A different water heater set temperature)
 Temperature_Shower = 105 #deg F
 Temperature_WaterHeater = 115 #deg F
+
+#The temperature of water entering the DWHR device will be lower than the shower temperature
+Temperature_Drain_Inlet = 100.4 #deg F, the temperature of water entering the drain side of the device
     
 #%%-------------------DEFINE FUNCTIONS----------------
 
@@ -126,7 +129,7 @@ for i in Draw_Profiles: #Repeat once for each file in Draw_Profiles. Note that i
     #Equal Flow calculations
 
     Draw_Profile['Effectiveness Generic Equal (-)'] = FourthOrder(Coefficients_Generic_Vertical_Equal, Draw_Profile['Flow Rate (gpm)'])
-    Draw_Profile['Savings Generic Equal (Btu)'] = Draw_Profile['Effectiveness Generic Equal (-)'] * Draw_Profile['Mixed Water Volume (gal)'] * Density_Water * SpecificHeat_Water * (Temperature_Shower - Draw_Profile['Mains Temperature (deg F)'])
+    Draw_Profile['Savings Generic Equal (Btu)'] = Draw_Profile['Effectiveness Generic Equal (-)'] * Draw_Profile['Mixed Water Volume (gal)'] * Density_Water * SpecificHeat_Water * (Temperature_Drain_Inlet - Draw_Profile['Mains Temperature (deg F)'])
 
     Savings_Generic_Equal = Draw_Profile['Savings Generic Equal (Btu)'].sum()/100000
 
@@ -137,7 +140,7 @@ for i in Draw_Profiles: #Repeat once for each file in Draw_Profiles. Note that i
     Draw_Profile['Potable Flow Unequal-WaterHeater (gal)'] = Draw_Profile['Mixed Water Volume (gal)'] * Calculate_Fraction_Cold_ThroughDWHR(Draw_Profile['Flow Rate (gpm)'], Draw_Profile['Mains Temperature (deg F)'], Temperature_Shower, Temperature_WaterHeater, 'Unequal_WaterHeater') #Perform the same calculation for the volume instead of the flow rate
 
     Draw_Profile['Effectiveness Generic Unequal_WaterHeater (-)'] = polyval2d(Draw_Profile['Flow Rate (gpm)'], Draw_Profile['Potable Flow Rate Unequal-WaterHeater (gal/min)'], Coefficients_Generic_Vertical_Unequal) * Effectiveness_Rated #Call the polyval2d function using the specified flow rates and the loaded coefficients to identify the effectiveness correction factor for this scenario. Then multiply by the rated effectiveness to find the actual effectiveness in this draw
-    Draw_Profile['Savings Generic Unequal_WaterHeater (Btu)'] = Draw_Profile['Effectiveness Generic Unequal_WaterHeater (-)'] * Draw_Profile['Potable Flow Unequal-WaterHeater (gal)'] * Density_Water * SpecificHeat_Water * (Temperature_Shower - Draw_Profile['Mains Temperature (deg F)']) #Multiply the effectiveness by the total available heat to identify the amount of energy saved
+    Draw_Profile['Savings Generic Unequal_WaterHeater (Btu)'] = Draw_Profile['Effectiveness Generic Unequal_WaterHeater (-)'] * Draw_Profile['Potable Flow Unequal-WaterHeater (gal)'] * Density_Water * SpecificHeat_Water * (Temperature_Drain_Inlet - Draw_Profile['Mains Temperature (deg F)']) #Multiply the effectiveness by the total available heat to identify the amount of energy saved
 
     Savings_Generic_Unequal_WaterHeater = Draw_Profile['Savings Generic Unequal_WaterHeater (Btu)'].sum()/100000 #Sum the total energy savings and divide by 100000 to convert to therms
 
@@ -166,9 +169,9 @@ for i in Draw_Profiles: #Repeat once for each file in Draw_Profiles. Note that i
         
         Draw_Profile['Effectiveness_Draw_Generic Equal, Flow=Cold'] = FourthOrder(Coefficients_Generic_Vertical_Equal, Draw_Profile['Flow_Cold_ThroughDWHR_Generic']) * Effectiveness_Rated #Calculates the effectiveness of the device under equal flow conditions, with the flow rate equal to the cold side flow rate. Per Eqn 5.7 on pg 104 of Manouchehri's thesis
         
-        Draw_Profile['HeatRecovered_Draw Generic Equal, Flow=Cold'] = Draw_Profile['Effectiveness_Draw_Generic Equal, Flow=Cold'] * Draw_Profile['FlowRate_Minimum'] * Density_Water * SpecificHeat_Water * (Temperature_Shower - Draw_Profile['Mains Temperature (deg F)']) * Draw_Profile['Duration (min)'] #Calcualte the energy recovered in the draw using Q_dot = m_dot * C_p * dT
+        Draw_Profile['HeatRecovered_Draw Generic Equal, Flow=Cold'] = Draw_Profile['Effectiveness_Draw_Generic Equal, Flow=Cold'] * Draw_Profile['FlowRate_Minimum'] * Density_Water * SpecificHeat_Water * (Temperature_Drain_Inlet - Draw_Profile['Mains Temperature (deg F)']) * Draw_Profile['Duration (min)'] #Calcualte the energy recovered in the draw using Q_dot = m_dot * C_p * dT
             
-        Draw_Profile['HeatRecoveryRate_Equal Generic (Btu/min)'] = Draw_Profile['Effectiveness_Draw_Generic Equal, Flow=Cold'] * Draw_Profile['FlowRate_Minimum'] * Density_Water * SpecificHeat_Water * (Temperature_Shower - Draw_Profile['Mains Temperature (deg F)']) #Calcualte the heat recovery rate of each draw in Btu/min
+        Draw_Profile['HeatRecoveryRate_Equal Generic (Btu/min)'] = Draw_Profile['Effectiveness_Draw_Generic Equal, Flow=Cold'] * Draw_Profile['FlowRate_Minimum'] * Density_Water * SpecificHeat_Water * (Temperature_Drain_Inlet - Draw_Profile['Mains Temperature (deg F)']) #Calcualte the heat recovery rate of each draw in Btu/min
             
         Draw_Profile['Flow Ratio Generic'] = Draw_Profile['Flow Rate (gpm)'] / Draw_Profile['Flow_Cold_ThroughDWHR_Generic'] #Calculate the flow ratio for this draw, per Ramin Manoucherri's paper and calculation method
             
