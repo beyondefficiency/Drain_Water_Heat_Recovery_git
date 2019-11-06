@@ -242,6 +242,6 @@ for i in Draw_Profiles: #Repeat once for each file in Draw_Profiles. Note that i
 
     Draw_Profile.to_csv(i + '_Analyzed.csv', index = False) #Save the performed calcualtsion to a new file with the same name followed by '_Analyzed'
     
-Results.to_csv(r'C:\Users\Peter Grant\Desktop\DWHRAnalysis\Results.csv', index = False)    
+Results.to_csv(r'C:\Users\Peter Grant\Desktop\DWHRAnalysis\Analyzed\Results.csv', index = False)    
 
 
