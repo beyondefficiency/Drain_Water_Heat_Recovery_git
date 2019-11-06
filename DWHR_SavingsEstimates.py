@@ -50,10 +50,11 @@ import numpy as np
 import itertools
 import math
 import glob
+import time
 
 #%%------------------INPUTS------------------------
     
-Path_DrawProfiles = r'C:\Users\Peter Grant\DWHR\Profiles' #The folder where all of the draw profiles to be analyzed are located
+Path_DrawProfiles = r'C:\Users\Peter Grant\Desktop\DWHRAnalysis' #The folder where all of the draw profiles to be analyzed are located
 
 Coefficients_Generic_Vertical_Unequal = np.fromfile(r'C:\Users\Peter Grant\Dropbox (Beyond Efficiency)\Beyond Efficiency Team Folder\Frontier Energy-TRC 2022 Title 24 MF CASE Support\DWHR\Analysis\Coefficients\Generic_Vertical_Unequal.csv') #The path to the coefficients for the unequal flow generic model of DWHR devices
 Coefficients_Generic_Vertical_Equal = np.fromfile(r'C:\Users\Peter Grant\Dropbox (Beyond Efficiency)\Beyond Efficiency Team Folder\Frontier Energy-TRC 2022 Title 24 MF CASE Support\DWHR\Analysis\Coefficients\Generic_Vertical_Equal.csv') #The path to the coefficients for the equal flow generic model of DWHR devices
@@ -72,6 +73,11 @@ Temperature_WaterHeater = 115 #deg F
 
 #The temperature of water entering the DWHR device will be lower than the shower temperature
 Temperature_Drain_Inlet = 100.4 #deg F, the temperature of water entering the drain side of the device
+
+#%%-------------------CREATE DATA STORAGE DATA FRAMES-------------------------
+
+Results = pd.DataFrame(columns = ['Filename', 'Savings, Equal (therms)', 'Savings, Unequal-WaterHeater (therms)', 'Savings, Unequal-Fixture (therms)'])
+Temp = pd.DataFrame(columns = ['Filename', 'Savings, Equal (therms)', 'Savings, Unequal-WaterHeater (therms)', 'Savings, Unequal-Fixture (therms)'])
     
 #%%-------------------DEFINE FUNCTIONS----------------
 
@@ -88,7 +94,10 @@ def Calculate_Fraction_Cold_ThroughDWHR(Flow_Shower, Temperature_Mains, Temperat
     elif Configuration == 'Unequal_WaterHeater' or Configuration == 'Unequal_Fixture': #If the DWHR device is installed in either the Unequal-WaterHeater or Unequal-Shower configuration
         Flow_Drain = Flow_Shower #Then the flow rate through the drain is equal to the shower flow rate
         Flow_Cold = Flow_Shower * (Temperature_Shower - Temperature_WaterHeater) / (Temperature_Mains - Temperature_WaterHeater) #Calculates the flow rate through the cold side of the DWHR device by performing an energy balance
-        Fraction_Cold_ThroughDWHR = Flow_Cold / Flow_Drain #Calculates the fraction of water passing through the DWHR device that has passed through the cold side of the device
+        if Configuration == 'Unequal_Fixture':
+            Fraction_Cold_ThroughDWHR = Flow_Cold / Flow_Drain #Calculates the fraction of water passing through the DWHR device that has passed through the cold side of the device
+        elif Configuration == 'Unequal_WaterHeater':
+            Fraction_Cold_ThroughDWHR = 1 - (Flow_Cold / Flow_Drain)
     return Fraction_Cold_ThroughDWHR
 
 #This function evaluates a 2-dimensional polynomial with the inputs x, y and the coefficients m
@@ -125,74 +134,114 @@ for i in Draw_Profiles: #Repeat once for each file in Draw_Profiles. Note that i
     #Draw_Profile = Draw_Profile[Draw_Profile['Fixture'] == 'SHWR'] #Filter the draw profile to only include shower draws. This line will likely be removed before use
 
     Draw_Profile['Mixed Water Volume (gal)'] = Draw_Profile['Flow Rate (gpm)'] * Draw_Profile['Duration (min)'] #Calculate the total volume of each draw
-
+    Draw_Profile['FlowRate Effectiveness Minimum'] = 0.5 #Set a lower bound to the flow rate used to calculate the effectiveness. This helps stabilize the iterative solution, brings about faster results
+    Draw_Profile['FlowRate Effectiveness Maximum'] = 7.5 #Set an upper bound to the flow rate used to calculate the effectiveness. This helps stabilize the iterative solution, bring about faster results
     #Equal Flow calculations
 
-    Draw_Profile['Effectiveness Generic Equal (-)'] = FourthOrder(Coefficients_Generic_Vertical_Equal, Draw_Profile['Flow Rate (gpm)'])
-    Draw_Profile['Savings Generic Equal (Btu)'] = Draw_Profile['Effectiveness Generic Equal (-)'] * Draw_Profile['Mixed Water Volume (gal)'] * Density_Water * SpecificHeat_Water * (Temperature_Drain_Inlet - Draw_Profile['Mains Temperature (deg F)'])
+    Start_Equal = time.time()
 
-    Savings_Generic_Equal = Draw_Profile['Savings Generic Equal (Btu)'].sum()/100000
+    Draw_Profile['FlowRate Effectiveness Equal (gal/min)'] = np.where(Draw_Profile['Flow Rate (gpm)'] >= Draw_Profile['FlowRate Effectiveness Minimum'], Draw_Profile['Flow Rate (gpm)'], Draw_Profile['FlowRate Effectiveness Minimum']) #In all rows where the cold side flow rate is larger than the minimum, keep the flow rate. Otherwise, replace the flow rate with the minimum
+    Draw_Profile['FlowRate Effectiveness Equal (gal/min)'] = np.where(Draw_Profile['FlowRate Effectiveness Equal (gal/min)'] <= Draw_Profile['FlowRate Effectiveness Maximum'], Draw_Profile['FlowRate Effectiveness Equal (gal/min)'], Draw_Profile['FlowRate Effectiveness Maximum'])     #In all rows where the cold side flow rate is larger than the maximum, keep the flow rate. Otherwise, replace the flow rate with the maximum
+    
+    Draw_Profile['Effectiveness Equal (-)'] = polyval2d(Draw_Profile['FlowRate Effectiveness Equal (gal/min)'], Draw_Profile['FlowRate Effectiveness Equal (gal/min)'], Coefficients_Generic_Vertical_Unequal) * Effectiveness_Rated #Call the polyval2d function using the specified flow rates and the loaded coefficients to identify the effectiveness correction factor for this scenario. Then multiply by the rated effectiveness to find the actual effectiveness in this draw
+    Draw_Profile['Savings Equal (Btu)'] = Draw_Profile['Effectiveness Equal (-)'] * Draw_Profile['Mixed Water Volume (gal)'] * Density_Water * SpecificHeat_Water * (Temperature_Drain_Inlet - Draw_Profile['Mains Temperature (deg F)'])
+    Draw_Profile['Heat Transfer Rate, Equal (Btu/min)'] = Draw_Profile['Effectiveness Equal (-)'] * Draw_Profile['Flow Rate (gpm)'] * Density_Water * SpecificHeat_Water * (Temperature_Drain_Inlet - Draw_Profile['Mains Temperature (deg F)'])
+    Draw_Profile['Cold-Side Outlet Temperature, Equal (deg F)'] = Draw_Profile['Heat Transfer Rate, Equal (Btu/min)'] / (Draw_Profile['Flow Rate (gpm)'] * Density_Water * SpecificHeat_Water) + Draw_Profile['Mains Temperature (deg F)']
+
+    Savings_Equal = Draw_Profile['Savings Equal (Btu)'].sum()/100000
+
+    End_Equal = time.time()
+    
+    print('Time_Equal is ' + str(End_Equal - Start_Equal))
 
     #Unequal-WaterHeater calculations
     
+    Start_UnequalWH = time.time()
 
     Draw_Profile['Potable Flow Rate Unequal-WaterHeater (gal/min)'] = Draw_Profile['Flow Rate (gpm)'] * Calculate_Fraction_Cold_ThroughDWHR(Draw_Profile['Flow Rate (gpm)'], Draw_Profile['Mains Temperature (deg F)'], Temperature_Shower, Temperature_WaterHeater, 'Unequal_WaterHeater') #Use the Calculate_Fraction_Cold_ThroughDWHR function to identify the flow rate of water through the cold side of the DWHR device
     Draw_Profile['Potable Flow Unequal-WaterHeater (gal)'] = Draw_Profile['Mixed Water Volume (gal)'] * Calculate_Fraction_Cold_ThroughDWHR(Draw_Profile['Flow Rate (gpm)'], Draw_Profile['Mains Temperature (deg F)'], Temperature_Shower, Temperature_WaterHeater, 'Unequal_WaterHeater') #Perform the same calculation for the volume instead of the flow rate
 
-    Draw_Profile['Effectiveness Generic Unequal_WaterHeater (-)'] = polyval2d(Draw_Profile['Flow Rate (gpm)'], Draw_Profile['Potable Flow Rate Unequal-WaterHeater (gal/min)'], Coefficients_Generic_Vertical_Unequal) * Effectiveness_Rated #Call the polyval2d function using the specified flow rates and the loaded coefficients to identify the effectiveness correction factor for this scenario. Then multiply by the rated effectiveness to find the actual effectiveness in this draw
-    Draw_Profile['Savings Generic Unequal_WaterHeater (Btu)'] = Draw_Profile['Effectiveness Generic Unequal_WaterHeater (-)'] * Draw_Profile['Potable Flow Unequal-WaterHeater (gal)'] * Density_Water * SpecificHeat_Water * (Temperature_Drain_Inlet - Draw_Profile['Mains Temperature (deg F)']) #Multiply the effectiveness by the total available heat to identify the amount of energy saved
+    Draw_Profile['FlowRate Cold Effectiveness Unequal-WaterHeater (gal/min)'] = np.where(Draw_Profile['Flow Rate (gpm)'] >= Draw_Profile['FlowRate Effectiveness Minimum'], Draw_Profile['Potable Flow Rate Unequal-WaterHeater (gal/min)'], Draw_Profile['FlowRate Effectiveness Minimum']) #In all rows where the cold side flow rate is larger than the minimum, keep the flow rate. Otherwise, replace the flow rate with the minimum
+    Draw_Profile['FlowRate Cold Effectiveness Unequal-WaterHeater (gal/min)'] = np.where(Draw_Profile['FlowRate Cold Effectiveness Unequal-WaterHeater (gal/min)'] <= Draw_Profile['FlowRate Effectiveness Maximum'], Draw_Profile['FlowRate Cold Effectiveness Unequal-WaterHeater (gal/min)'], Draw_Profile['FlowRate Effectiveness Maximum'])     #In all rows where the cold side flow rate is larger than the maximum, keep the flow rate. Otherwise, replace the flow rate with the maximum
 
-    Savings_Generic_Unequal_WaterHeater = Draw_Profile['Savings Generic Unequal_WaterHeater (Btu)'].sum()/100000 #Sum the total energy savings and divide by 100000 to convert to therms
+    Draw_Profile['Effectiveness Unequal-WaterHeater (-)'] = polyval2d(Draw_Profile['FlowRate Effectiveness Equal (gal/min)'], Draw_Profile['FlowRate Cold Effectiveness Unequal-WaterHeater (gal/min)'], Coefficients_Generic_Vertical_Unequal) * Effectiveness_Rated #Call the polyval2d function using the specified flow rates and the loaded coefficients to identify the effectiveness correction factor for this scenario. Then multiply by the rated effectiveness to find the actual effectiveness in this draw
+    Draw_Profile['Savings Unequal-WaterHeater (Btu)'] = Draw_Profile['Effectiveness Unequal-WaterHeater (-)'] * Draw_Profile['Potable Flow Unequal-WaterHeater (gal)'] * Density_Water * SpecificHeat_Water * (Temperature_Drain_Inlet - Draw_Profile['Mains Temperature (deg F)']) #Multiply the effectiveness by the total available heat to identify the amount of energy saved
+    Draw_Profile['Heat Transfer Rate, Unequal-WaterHeater (Btu/min)'] = Draw_Profile['Effectiveness Unequal-WaterHeater (-)'] * Draw_Profile['Potable Flow Rate Unequal-WaterHeater (gal/min)'] * Density_Water * SpecificHeat_Water * (Temperature_Drain_Inlet - Draw_Profile['Mains Temperature (deg F)'])
+    Draw_Profile['Cold-Side Outlet Temperature, Unequal-WaterHeater (deg F)'] = Draw_Profile['Heat Transfer Rate, Unequal-WaterHeater (Btu/min)'] / (Draw_Profile['Potable Flow Rate Unequal-WaterHeater (gal/min)'] * Density_Water * SpecificHeat_Water) + Draw_Profile['Mains Temperature (deg F)']
+    
+    Savings_Unequal_WaterHeater = Draw_Profile['Savings Unequal-WaterHeater (Btu)'].sum()/100000 #Sum the total energy savings and divide by 100000 to convert to therms
+
+    End_UnequalWH = time.time()
+    
+    print('Time_Unequal-WaterHeater is ' + str(End_UnequalWH - Start_UnequalWH))
 
     #Unequal-Fixture calculations
 
-    #Initilizing iterative loop calculations
-    Draw_Profile['Fixture Cold Temperature Generic (deg F)'] = Draw_Profile['Mains Temperature (deg F)'] #Make the starting assumption that the temperature of water exiting the cold side of the device is equal to the mains inlet temperature
-    Draw_Profile['Flow_Delta Generic (gal/min)'] = 9999 #Flow_Delta represents the difference between the assumed cold-side flow rate and the calcualted cold-side flow rate. This is needed as unequal-shower configurations change the cold-side outlet temperature, which changes the flow rate, which changes the temperature, ... . It's an iterative solution that is considered solved when this difference is very small
-    Draw_Profile['Flow_Cold_ThroughDWHR_Generic'] = Draw_Profile['Flow Rate (gpm)'] - Draw_Profile['Hot Water Flow Rate (gpm)'] #Set the cold side flow rate equal to the total flow rate - the hot flow rate
+    Start_UnequalFixture = time.time()
 
-    Draw_Profile['FlowRate Effectiveness Minimum'] = 0.5 #Set a lower bound to the flow rate used to calculate the effectiveness. This helps stabilize the iterative solution, brings about faster results
-    Draw_Profile['FlowRate Effectiveness Maximum'] = 7.5 #Set an upper bound to the flow rate used to calculate the effectiveness. This helps stabilize the iterative solution, bring about faster results
+    #Initilizing iterative loop calculations
+    Draw_Profile['Fixture Cold Temperature (deg F)'] = Draw_Profile['Mains Temperature (deg F)'] #Make the starting assumption that the temperature of water exiting the cold side of the device is equal to the mains inlet temperature
+    Draw_Profile['Flow Delta (gal/min)'] = 9999 #Flow_Delta represents the difference between the assumed cold-side flow rate and the calcualted cold-side flow rate. This is needed as unequal-shower configurations change the cold-side outlet temperature, which changes the flow rate, which changes the temperature, ... . It's an iterative solution that is considered solved when this difference is very small
+    Draw_Profile['Flow Cold ThroughDWHR, Unequal-Fixture'] = Draw_Profile['Flow Rate (gpm)'] - Draw_Profile['Hot Water Flow Rate (gpm)'] #Set the cold side flow rate equal to the total flow rate - the hot flow rate
 
     j = 0 #I'm not sure that this is still useful
 
     #Repeat this process iteratively until the solution is achieved
-    while Draw_Profile['Flow_Delta Generic (gal/min)'].max() >= 0.01: #Convergence is identified when the cold side flow rate before and after calculations differ by less than 0.01 gal/min. Continue these calculations until that is achieved
+    while Draw_Profile['Flow Delta (gal/min)'].max() >= 0.01: #Convergence is identified when the cold side flow rate before and after calculations differ by less than 0.01 gal/min. Continue these calculations until that is achieved
         
-        Draw_Profile['FlowRate_Cold_Effectiveness Generic'] = np.where(Draw_Profile['Flow_Cold_ThroughDWHR_Generic'] >= Draw_Profile['FlowRate Effectiveness Minimum'], Draw_Profile['Flow_Cold_ThroughDWHR_Generic'], Draw_Profile['FlowRate Effectiveness Minimum']) #In all rows where the cold side flow rate is larger than the minimum, keep the flow rate. Otherwise, replace the flow rate with the minimum
-        Draw_Profile['FlowRate_Cold_Effectiveness Generic'] = np.where(Draw_Profile['FlowRate_Cold_Effectiveness Generic'] <= Draw_Profile['FlowRate Effectiveness Maximum'], Draw_Profile['FlowRate_Cold_Effectiveness Generic'], Draw_Profile['FlowRate Effectiveness Maximum'])     #In all rows where the cold side flow rate is larger than the maximum, keep the flow rate. Otherwise, replace the flow rate with the maximum
+        Draw_Profile['FlowRate_Cold_Effectiveness Unequal-Fixture'] = np.where(Draw_Profile['Flow Cold ThroughDWHR, Unequal-Fixture'] >= Draw_Profile['FlowRate Effectiveness Minimum'], Draw_Profile['Flow Cold ThroughDWHR, Unequal-Fixture'], Draw_Profile['FlowRate Effectiveness Minimum']) #In all rows where the cold side flow rate is larger than the minimum, keep the flow rate. Otherwise, replace the flow rate with the minimum
+        Draw_Profile['FlowRate_Cold_Effectiveness Unequal-Fixture'] = np.where(Draw_Profile['FlowRate_Cold_Effectiveness Unequal-Fixture'] <= Draw_Profile['FlowRate Effectiveness Maximum'], Draw_Profile['FlowRate_Cold_Effectiveness Unequal-Fixture'], Draw_Profile['FlowRate Effectiveness Maximum'])     #In all rows where the cold side flow rate is larger than the maximum, keep the flow rate. Otherwise, replace the flow rate with the maximum
 
-        Draw_Profile['FlowRate_Draw_Effectiveness Generic'] = np.where(Draw_Profile['Flow Rate (gpm)'] >= Draw_Profile['FlowRate Effectiveness Minimum'], Draw_Profile['Flow Rate (gpm)'], Draw_Profile['FlowRate Effectiveness Minimum']) #Performs the same process for the mixed water flow rates
-        Draw_Profile['FlowRate_Draw_Effectiveness Generic'] = np.where(Draw_Profile['FlowRate_Draw_Effectiveness Generic'] <= Draw_Profile['FlowRate Effectiveness Maximum'], Draw_Profile['FlowRate_Draw_Effectiveness Generic'], Draw_Profile['FlowRate Effectiveness Maximum'])
+        Draw_Profile['FlowRate_Draw_Effectiveness Unequal-Fixture'] = np.where(Draw_Profile['Flow Rate (gpm)'] >= Draw_Profile['FlowRate Effectiveness Minimum'], Draw_Profile['Flow Rate (gpm)'], Draw_Profile['FlowRate Effectiveness Minimum']) #Performs the same process for the mixed water flow rates
+        Draw_Profile['FlowRate_Draw_Effectiveness Unequal-Fixture'] = np.where(Draw_Profile['FlowRate_Draw_Effectiveness Unequal-Fixture'] <= Draw_Profile['FlowRate Effectiveness Maximum'], Draw_Profile['FlowRate_Draw_Effectiveness Unequal-Fixture'], Draw_Profile['FlowRate Effectiveness Maximum'])
     
-        Draw_Profile['FlowRate_Minimum'] = Draw_Profile['Flow Rate (gpm)'].combine(Draw_Profile['Flow_Cold_ThroughDWHR_Generic'], min, 0) #Ensure that under no circumstances is a flow rate less than 0 gal/min used     
+        Draw_Profile['FlowRate_Minimum'] = Draw_Profile['Flow Rate (gpm)'].combine(Draw_Profile['Flow Cold ThroughDWHR, Unequal-Fixture'], min, 0) #Ensure that under no circumstances is a flow rate less than 0 gal/min used     
         
-        Draw_Profile['Effectiveness_Draw_Generic Equal, Flow=Cold'] = FourthOrder(Coefficients_Generic_Vertical_Equal, Draw_Profile['Flow_Cold_ThroughDWHR_Generic']) * Effectiveness_Rated #Calculates the effectiveness of the device under equal flow conditions, with the flow rate equal to the cold side flow rate. Per Eqn 5.7 on pg 104 of Manouchehri's thesis
+        Draw_Profile['Effectiveness_Draw Equal, Flow=Cold'] = polyval2d(Draw_Profile['FlowRate_Cold_Effectiveness Unequal-Fixture'], Draw_Profile['FlowRate_Cold_Effectiveness Unequal-Fixture'], Coefficients_Generic_Vertical_Unequal) * Effectiveness_Rated #Calculates the effectiveness of the device under equal flow conditions, with the flow rate equal to the cold side flow rate. Per Eqn 5.7 on pg 104 of Manouchehri's thesis
         
-        Draw_Profile['HeatRecovered_Draw Generic Equal, Flow=Cold'] = Draw_Profile['Effectiveness_Draw_Generic Equal, Flow=Cold'] * Draw_Profile['FlowRate_Minimum'] * Density_Water * SpecificHeat_Water * (Temperature_Drain_Inlet - Draw_Profile['Mains Temperature (deg F)']) * Draw_Profile['Duration (min)'] #Calcualte the energy recovered in the draw using Q_dot = m_dot * C_p * dT
+        Draw_Profile['HeatRecovered_Draw Equal, Flow=Cold'] = Draw_Profile['Effectiveness_Draw Equal, Flow=Cold'] * Draw_Profile['FlowRate_Minimum'] * Density_Water * SpecificHeat_Water * (Temperature_Drain_Inlet - Draw_Profile['Mains Temperature (deg F)']) * Draw_Profile['Duration (min)'] #Calcualte the energy recovered in the draw using Q_dot = m_dot * C_p * dT
             
-        Draw_Profile['HeatRecoveryRate_Equal Generic (Btu/min)'] = Draw_Profile['Effectiveness_Draw_Generic Equal, Flow=Cold'] * Draw_Profile['FlowRate_Minimum'] * Density_Water * SpecificHeat_Water * (Temperature_Drain_Inlet - Draw_Profile['Mains Temperature (deg F)']) #Calcualte the heat recovery rate of each draw in Btu/min
+        Draw_Profile['HeatRecoveryRate_Equal (Btu/min)'] = Draw_Profile['Effectiveness_Draw Equal, Flow=Cold'] * Draw_Profile['FlowRate_Minimum'] * Density_Water * SpecificHeat_Water * (Temperature_Drain_Inlet - Draw_Profile['Mains Temperature (deg F)']) #Calcualte the heat recovery rate of each draw in Btu/min
             
-        Draw_Profile['Flow Ratio Generic'] = Draw_Profile['Flow Rate (gpm)'] / Draw_Profile['Flow_Cold_ThroughDWHR_Generic'] #Calculate the flow ratio for this draw, per Ramin Manoucherri's paper and calculation method
+        Draw_Profile['Flow Ratio, Unequal-Fixture'] = Draw_Profile['Flow Rate (gpm)'] / Draw_Profile['Flow Cold ThroughDWHR, Unequal-Fixture'] #Calculate the flow ratio for this draw, per Ramin Manoucherri's paper and calculation method
             
-        Draw_Profile['HeatRecoveryRate_Unequal-Fixture Generic (Btu/min)'] = Draw_Profile['HeatRecoveryRate_Equal Generic (Btu/min)'] * (0.3452 * Draw_Profile['Flow Ratio Generic'].apply(log) + 1) #Calculate the heat recovery rate per Ramin Manoucheri's paper and method
+        Draw_Profile['HeatRecoveryRate_Unequal-Fixture (Btu/min)'] = Draw_Profile['HeatRecoveryRate_Equal (Btu/min)'] * (0.3452 * Draw_Profile['Flow Ratio, Unequal-Fixture'].apply(log) + 1) #Calculate the heat recovery rate per Ramin Manoucheri's paper and method
         
-        Draw_Profile['HeatRecovered_Draw_Generic_Unequal-Fixture (Btu)'] = Draw_Profile['HeatRecoveryRate_Unequal-Fixture Generic (Btu/min)'] * Draw_Profile['Duration (min)'] #Calculate the energy recovered in each draw
+        Draw_Profile['HeatRecovered_Draw_Unequal-Fixture (Btu)'] = Draw_Profile['HeatRecoveryRate_Unequal-Fixture (Btu/min)'] * Draw_Profile['Duration (min)'] #Calculate the energy recovered in each draw
         
-        Draw_Profile['Fixture Cold Temperature Generic (deg F)'] = Draw_Profile['HeatRecoveryRate_Unequal-Fixture Generic (Btu/min)'] / (Draw_Profile['Flow_Cold_ThroughDWHR_Generic'] * SpecificHeat_Water* Density_Water) + Draw_Profile['Mains Temperature (deg F)'] #Calculate the outlet temperature of the DWHR device in this draw
+        Draw_Profile['Fixture Cold Temperature (deg F)'] = Draw_Profile['HeatRecoveryRate_Unequal-Fixture (Btu/min)'] / (Draw_Profile['Flow Cold ThroughDWHR, Unequal-Fixture'] * SpecificHeat_Water * Density_Water) + Draw_Profile['Mains Temperature (deg F)'] #Calculate the outlet temperature of the DWHR device in this draw
         
-        Draw_Profile['Flow_Cold_ThroughDWHR_PostCalcuations Generic'] = Calculate_Fraction_Cold_ThroughDWHR(Draw_Profile['Flow Rate (gpm)'], Draw_Profile['Fixture Cold Temperature Generic (deg F)'], Temperature_Shower, Temperature_WaterHeater, 'Unequal_Fixture') * Draw_Profile['Flow Rate (gpm)'] #Calculate the cold-side flow rate through the DWHR device using the newly calculated cold-side outlet temperature
+        Draw_Profile['Flow_Cold_ThroughDWHR_PostCalcuations'] = Calculate_Fraction_Cold_ThroughDWHR(Draw_Profile['Flow Rate (gpm)'], Draw_Profile['Fixture Cold Temperature (deg F)'], Temperature_Shower, Temperature_WaterHeater, 'Unequal_Fixture') * Draw_Profile['Flow Rate (gpm)'] #Calculate the cold-side flow rate through the DWHR device using the newly calculated cold-side outlet temperature
             
-        Draw_Profile['Flow_Delta Generic (gal/min)'] = abs(Draw_Profile['Flow_Cold_ThroughDWHR_Generic'] - Draw_Profile['Flow_Cold_ThroughDWHR_PostCalcuations Generic']) #Calculate the difference between the cold-side flow rate before and after calculations
+        Draw_Profile['Flow Delta (gal/min)'] = abs(Draw_Profile['Flow Cold ThroughDWHR, Unequal-Fixture'] - Draw_Profile['Flow_Cold_ThroughDWHR_PostCalcuations']) #Calculate the difference between the cold-side flow rate before and after calculations
 
-        Draw_Profile['Flow_Cold_ThroughDWHR_Generic'] = Draw_Profile['Flow_Cold_ThroughDWHR_PostCalcuations Generic'] #Set the cold-side flow rate through the device equal to the new cold-side flow rate through the device, so it's treated as the starting point in the next iteration
+        Draw_Profile['Flow Cold ThroughDWHR, Unequal-Fixture'] = Draw_Profile['Flow_Cold_ThroughDWHR_PostCalcuations'] #Set the cold-side flow rate through the device equal to the new cold-side flow rate through the device, so it's treated as the starting point in the next iteration
 
         j += 1
 
-    Savings_Generic_Unequal_Fixture = Draw_Profile['HeatRecovered_Draw_Generic_Unequal-Fixture (Btu)'].sum()/100000 #Sum the energy savings and convert from Btu to therms
+    Savings_Unequal_Fixture = Draw_Profile['HeatRecovered_Draw_Unequal-Fixture (Btu)'].sum()/100000 #Sum the energy savings and convert from Btu to therms
+    Draw_Profile['Cold-Side Outlet Temperature, Unequal-Fixture (deg F)'] = Draw_Profile['HeatRecoveryRate_Unequal-Fixture (Btu/min)'] / (Draw_Profile['Flow Cold ThroughDWHR, Unequal-Fixture'] * Density_Water * SpecificHeat_Water) + Draw_Profile['Mains Temperature (deg F)']
+
+    End_UnequalFixture = time.time()
+    
+    print('Time_UnequalFixture is ' + str(End_UnequalFixture - Start_UnequalFixture))
 
 #%%----------------SAVE DATA----------------------------
 
+    print('i is ' + str(i))
+    print('Equal: ' + str(Savings_Equal))
+    print('Unequal-WH: ' + str(Savings_Unequal_WaterHeater))
+    print('Unequal-Fixture: ' +str(Savings_Unequal_Fixture))
+    
+    Temp.loc[0, 'Filename'] = i
+    Temp.loc[0, 'Savings, Equal (therms)'] = Savings_Equal
+    Temp.loc[0, 'Savings, Unequal-WaterHeater (therms)'] = Savings_Unequal_WaterHeater
+    Temp.loc[0, 'Savings, Unequal-Fixture (therms)'] = Savings_Unequal_Fixture
+    
+    Results = Results.append(Temp)
+
     Draw_Profile.to_csv(i + '_Analyzed.csv', index = False) #Save the performed calcualtsion to a new file with the same name followed by '_Analyzed'
+    
+Results.to_csv(r'C:\Users\Peter Grant\Desktop\DWHRAnalysis\Results.csv', index = False)    
 
 
