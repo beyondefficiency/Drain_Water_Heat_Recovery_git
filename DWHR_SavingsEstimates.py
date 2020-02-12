@@ -68,7 +68,7 @@ Coefficients_Generic_Vertical_Equal = np.fromfile(r'C:\Users\Peter Grant\Dropbox
 #
 #Coefficients_Generic_Vertical_Equal = [-6.98384455e-04, 1.28561447e-02, -7.02399803e-02, 1.33657748e-02, 1.23339312e+00]
 
-Effectiveness_Rated = 0.466 #The rated effectiveness of the DWHR device tested under CSA B55.1 or IAPMO IGC 346-2017
+Effectiveness_Rated = 0.42 #The rated effectiveness of the DWHR device tested under CSA B55.1 or IAPMO IGC 346-2017
 
 #%%------------------CONSTANTS------------------------
 
@@ -209,18 +209,10 @@ for i in Draw_Profiles: #Repeat once for each file in Draw_Profiles. Note that i
         Draw_Profile['HeatRecoveryRate_Equal, Flow=Cold (Btu/min)'] = Draw_Profile['Effectiveness_Draw Equal, Flow=Cold (-)'] * Draw_Profile['FlowRate Minimum, Unequal-Fixture (gal/min)'] * Density_Water * SpecificHeat_Water * (Temperature_Drain_Inlet - Draw_Profile['Mains Temperature (deg F)']) #Calcualte the heat recovery rate of each draw in Btu/min
             
         Draw_Profile['Flow Ratio, Unequal-Fixture'] = Draw_Profile['Flow Rate (gpm)'] / Draw_Profile['Flow Cold ThroughDWHR, Unequal-Fixture (gal/min)'] #Calculate the flow ratio for this draw, per Ramin Manoucherri's paper and calculation method        
-#        Draw_Profile['Effectiveness, Unequal-Fixture (-)'] = Draw_Profile['Effectiveness_Draw Equal, Flow=Cold (-)'] * (0.3452 * Draw_Profile['Flow Ratio, Unequal-Fixture'].apply(log) + 1) #Calculate the heat recovery rate per Ramin Manoucheri's paper and method       
         Draw_Profile['HeatRecoveryRate, Unequal-Fixture (Btu/min)'] = Draw_Profile['HeatRecoveryRate_Equal, Flow=Cold (Btu/min)'] * (0.3452 * Draw_Profile['Flow Ratio, Unequal-Fixture'].apply(log) + 1) #Calculate the heat recovery rate per Ramin Manoucheri's paper and method        
         Draw_Profile['HeatRecovered, Unequal-Fixture (Btu)'] = Draw_Profile['HeatRecoveryRate, Unequal-Fixture (Btu/min)'] * Draw_Profile['Duration (min)'] #Calculate the energy recovered in each draw        
-#        Draw_Profile['HeatRecoveryRate, Unequal-Fixture, v2 (Btu/min)'] = Draw_Profile['Effectivness, Unequal-Fixture (-)'] * Draw_Profile['FlowRate Minimum, Unequal-Fixture (gal/min)'] * Density_Water * SpecificHeat_Water * (Temperature_Drain_Inlet - Draw_Profile['Mains Temperature (deg F)'])        
-#        Draw_Profile['HeatRecovered, Unequal-Fixture, v2 (Btu)'] = Draw_Profile['HeatRecoveryRate, Unequal-Fixture, v2 (Btu/min)'] * Draw_Profile['Duration (min)'] #Calculate the energy recovered in each draw        
         Draw_Profile['Cold-Side Outlet Temperature, Unequal-Fixture (deg F)'] = Draw_Profile['HeatRecoveryRate, Unequal-Fixture (Btu/min)'] / (Draw_Profile['Flow Cold ThroughDWHR, Unequal-Fixture (gal/min)'] * SpecificHeat_Water * Density_Water) + Draw_Profile['Mains Temperature (deg F)'] #Calculate the outlet temperature of the DWHR device in this draw
-
-#        Draw_Profile['Effectiveness Equal, ACM, Flow=Cold (-)'] = FourthOrder(Coefficients_Generic_Vertical_Equal, Draw_Profile['Flow Cold ThroughDWHR, Unequal-Fixture (gal/min)']) * Effectiveness_Rated
-#        Draw_Profile['Effectiveness Unequal, ACM (-)'] = Draw_Profile['Effectiveness Equal, ACM, Flow=Cold (-)'] * (0.3452 * Draw_Profile['Flow Ratio, Unequal-Fixture'].apply(log) + 1)
-#        Draw_Profile['Effectiveness Unequal, ACM (-)'] = Draw_Profile['Effectiveness Unequal, ACM (-)'].combine(Draw_Profile['Effectiveness Unequal, ACM (-)'], max, 0)
-#        Draw_Profile['Effectiveness Unequal, ACM (-)'] = Draw_Profile['Effectiveness Unequal, ACM (-)'].combine(Draw_Profile['Effectiveness Unequal, ACM (-)'], min, 0.95)
-        
+       
         Draw_Profile['Flow Cold ThroughDWHR, PostCalcuations (gal/min)'] = Calculate_Fraction_Cold_ThroughDWHR(Draw_Profile['Flow Rate (gpm)'], Draw_Profile['Cold-Side Outlet Temperature, Unequal-Fixture (deg F)'], Temperature_Shower, Temperature_WaterHeater, 'Unequal_Fixture') * Draw_Profile['Flow Rate (gpm)'] #Calculate the cold-side flow rate through the DWHR device using the newly calculated cold-side outlet temperature            
         Draw_Profile['Flow Delta (gal/min)'] = abs(Draw_Profile['Flow Cold ThroughDWHR, Unequal-Fixture (gal/min)'] - Draw_Profile['Flow Cold ThroughDWHR, PostCalcuations (gal/min)']) #Calculate the difference between the cold-side flow rate before and after calculations
         Draw_Profile['Flow Cold ThroughDWHR, Unequal-Fixture (gal/min)'] = Draw_Profile['Flow Cold ThroughDWHR, PostCalcuations (gal/min)'] #Set the cold-side flow rate through the device equal to the new cold-side flow rate through the device, so it's treated as the starting point in the next iteration
@@ -249,6 +241,6 @@ for i in Draw_Profiles: #Repeat once for each file in Draw_Profiles. Note that i
 
     Draw_Profile.to_csv(i + '_Analyzed.csv', index = False) #Save the performed calcualtsion to a new file with the same name followed by '_Analyzed'
     
-Results.to_csv(r'C:\Users\Peter Grant\Desktop\DWHRAnalysis\Analyzed\Results.csv', index = False)    
+Results.to_csv(r'C:\Users\Peter Grant\Desktop\DWHRAnalysis\Results.csv', index = False)    
 
 
